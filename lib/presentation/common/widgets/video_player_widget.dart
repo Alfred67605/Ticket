@@ -53,34 +53,23 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         _controller = VideoPlayerController.file(file);
       }
 
-      _controller!.addListener(_onControllerUpdate);
-
       _controller!.initialize().then((_) {
         if (!mounted || _disposed) return;
-        setState(() {
-          _isInitialized = true;
-        });
         _controller?.setLooping(true);
         _controller?.setVolume(widget.isMuted ? 0.0 : 1.0);
         _controller?.play();
+        setState(() {
+          _isInitialized = true;
+        });
       }).catchError((error) {
         debugPrint('VideoPlayer init error: $error');
         if (mounted && !_disposed) {
-          setState(() {
-            _hasError = true;
-          });
+          setState(() => _hasError = true);
         }
       });
     } catch (e) {
       debugPrint('VideoPlayer initialization error: $e');
       _hasError = true;
-    }
-  }
-
-  void _onControllerUpdate() {
-    // Solo rebuild si montado y no disposed
-    if (mounted && !_disposed) {
-      setState(() {});
     }
   }
 
@@ -99,10 +88,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     final c = _controller;
     _controller = null;
     if (c != null) {
-      try {
-        c.removeListener(_onControllerUpdate);
-        c.dispose();
-      } catch (_) {}
+      try { c.dispose(); } catch (_) {}
     }
   }
 
@@ -133,32 +119,29 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       );
     }
 
-    try {
-      final size = controller.value.size;
-      final hasValidSize = size.width > 0 && size.height > 0;
-
-      if (hasValidSize) {
-        // Usar FittedBox con las dimensiones reales del video
-        return SizedBox.expand(
-          child: FittedBox(
-            fit: BoxFit.cover,
-            clipBehavior: Clip.hardEdge,
-            child: SizedBox(
-              width: size.width,
-              height: size.height,
-              child: VideoPlayer(controller),
-            ),
-          ),
-        );
-      } else {
-        // Tamaño aún no disponible: renderizar directamente sin FittedBox
-        return SizedBox.expand(
-          child: VideoPlayer(controller),
-        );
-      }
-    } catch (e) {
-      debugPrint('VideoPlayer build error: $e');
+    // Usar Texture directamente en vez del widget VideoPlayer del paquete
+    // para evitar el crash interno "Null check operator used on a null value"
+    // que ocurre en chipsets MediaTek dentro de _VideoPlayerWithRotation.
+    final textureId = controller.textureId;
+    if (textureId == null) {
       return const SizedBox.shrink();
     }
+
+    return SizedBox.expand(
+      child: ClipRect(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: controller.value.size.width > 0
+                ? controller.value.size.width
+                : MediaQuery.of(context).size.width,
+            height: controller.value.size.height > 0
+                ? controller.value.size.height
+                : MediaQuery.of(context).size.height,
+            child: Texture(textureId: textureId),
+          ),
+        ),
+      ),
+    );
   }
 }
