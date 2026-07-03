@@ -41,7 +41,6 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         final uri = Uri.parse(widget.videoUrl);
         _controller = VideoPlayerController.networkUrl(uri);
       } else if (kIsWeb) {
-        // En Web no se puede usar File de dart:io
         _hasError = true;
         return;
       } else {
@@ -54,14 +53,16 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         _controller = VideoPlayerController.file(file);
       }
 
+      _controller!.addListener(_onControllerUpdate);
+
       _controller!.initialize().then((_) {
         if (!mounted || _disposed) return;
         setState(() {
           _isInitialized = true;
         });
-        _controller!.setLooping(true);
-        _controller!.setVolume(widget.isMuted ? 0.0 : 1.0);
-        _controller!.play();
+        _controller?.setLooping(true);
+        _controller?.setVolume(widget.isMuted ? 0.0 : 1.0);
+        _controller?.play();
       }).catchError((error) {
         debugPrint('VideoPlayer init error: $error');
         if (mounted && !_disposed) {
@@ -73,6 +74,13 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     } catch (e) {
       debugPrint('VideoPlayer initialization error: $e');
       _hasError = true;
+    }
+  }
+
+  void _onControllerUpdate() {
+    // Solo rebuild si montado y no disposed
+    if (mounted && !_disposed) {
+      setState(() {});
     }
   }
 
@@ -91,7 +99,10 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     final c = _controller;
     _controller = null;
     if (c != null) {
-      c.dispose();
+      try {
+        c.removeListener(_onControllerUpdate);
+        c.dispose();
+      } catch (_) {}
     }
   }
 
@@ -104,11 +115,12 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (_hasError || _controller == null || !_isInitialized) {
-      if (_hasError) {
-        return const SizedBox.shrink(); // Fallback transparente: la imagen se ve debajo
-      }
-      // Aún cargando
+    if (_hasError) {
+      return const SizedBox.shrink();
+    }
+
+    final controller = _controller;
+    if (controller == null || !_isInitialized) {
       return const Center(
         child: SizedBox(
           width: 24,
@@ -122,25 +134,28 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
     }
 
     try {
-      final controller = _controller!;
       final size = controller.value.size;
+      final hasValidSize = size.width > 0 && size.height > 0;
 
-      // Proteger contra dimensiones 0 o inválidas
-      if (size.width <= 0 || size.height <= 0) {
-        return const SizedBox.shrink();
-      }
-
-      return SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          clipBehavior: Clip.hardEdge,
-          child: SizedBox(
-            width: size.width,
-            height: size.height,
-            child: VideoPlayer(controller),
+      if (hasValidSize) {
+        // Usar FittedBox con las dimensiones reales del video
+        return SizedBox.expand(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: size.width,
+              height: size.height,
+              child: VideoPlayer(controller),
+            ),
           ),
-        ),
-      );
+        );
+      } else {
+        // Tamaño aún no disponible: renderizar directamente sin FittedBox
+        return SizedBox.expand(
+          child: VideoPlayer(controller),
+        );
+      }
     } catch (e) {
       debugPrint('VideoPlayer build error: $e');
       return const SizedBox.shrink();
