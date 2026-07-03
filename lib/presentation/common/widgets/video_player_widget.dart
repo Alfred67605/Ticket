@@ -22,6 +22,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _hasError = false;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -31,32 +32,39 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
   void _initController() {
     try {
-      final uri = Uri.parse(widget.videoUrl);
+      if (widget.videoUrl.isEmpty) {
+        _hasError = true;
+        return;
+      }
+
       if (widget.videoUrl.startsWith('http')) {
+        final uri = Uri.parse(widget.videoUrl);
         _controller = VideoPlayerController.networkUrl(uri);
       } else if (kIsWeb) {
         // En Web no se puede usar File de dart:io
-        setState(() {
-          _hasError = true;
-        });
+        _hasError = true;
         return;
       } else {
-        _controller = VideoPlayerController.file(File(widget.videoUrl));
+        final file = File(widget.videoUrl);
+        if (!file.existsSync()) {
+          debugPrint('VideoPlayer: archivo no existe: ${widget.videoUrl}');
+          _hasError = true;
+          return;
+        }
+        _controller = VideoPlayerController.file(file);
       }
 
       _controller!.initialize().then((_) {
-        if (mounted) {
-          _controller!.addListener(_videoListener);
-          setState(() {
-            _isInitialized = true;
-          });
-          _controller!.setLooping(true);
-          _controller!.setVolume(widget.isMuted ? 0.0 : 1.0);
-          _controller!.play();
-        }
+        if (!mounted || _disposed) return;
+        setState(() {
+          _isInitialized = true;
+        });
+        _controller!.setLooping(true);
+        _controller!.setVolume(widget.isMuted ? 0.0 : 1.0);
+        _controller!.play();
       }).catchError((error) {
-        debugPrint('VideoPlayer error: $error');
-        if (mounted) {
+        debugPrint('VideoPlayer init error: $error');
+        if (mounted && !_disposed) {
           setState(() {
             _hasError = true;
           });
@@ -64,15 +72,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
       });
     } catch (e) {
       debugPrint('VideoPlayer initialization error: $e');
-      setState(() {
-        _hasError = true;
-      });
-    }
-  }
-
-  void _videoListener() {
-    if (mounted) {
-      setState(() {});
+      _hasError = true;
     }
   }
 
@@ -80,43 +80,35 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   void didUpdateWidget(covariant VideoPlayerWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.videoUrl != widget.videoUrl) {
-      if (_controller != null) {
-        _controller!.removeListener(_videoListener);
-        _controller!.dispose();
-      }
+      _disposeController();
       _isInitialized = false;
       _hasError = false;
       _initController();
     }
   }
 
+  void _disposeController() {
+    final c = _controller;
+    _controller = null;
+    if (c != null) {
+      c.dispose();
+    }
+  }
+
   @override
   void dispose() {
-    if (_controller != null) {
-      _controller!.removeListener(_videoListener);
-      _controller!.dispose();
-    }
+    _disposed = true;
+    _disposeController();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_hasError || _controller == null) {
-      return const SizedBox.shrink(); // Fallback so image layer can show
-    }
-    if (_isInitialized) {
-      return SizedBox.expand(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          clipBehavior: Clip.hardEdge,
-          child: SizedBox(
-            width: _controller!.value.size.width,
-            height: _controller!.value.size.height,
-            child: VideoPlayer(_controller!),
-          ),
-        ),
-      );
-    } else {
+    if (_hasError || _controller == null || !_isInitialized) {
+      if (_hasError) {
+        return const SizedBox.shrink(); // Fallback transparente: la imagen se ve debajo
+      }
+      // Aún cargando
       return const Center(
         child: SizedBox(
           width: 24,
@@ -128,6 +120,30 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
         ),
       );
     }
+
+    try {
+      final controller = _controller!;
+      final size = controller.value.size;
+
+      // Proteger contra dimensiones 0 o inválidas
+      if (size.width <= 0 || size.height <= 0) {
+        return const SizedBox.shrink();
+      }
+
+      return SizedBox.expand(
+        child: FittedBox(
+          fit: BoxFit.cover,
+          clipBehavior: Clip.hardEdge,
+          child: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: VideoPlayer(controller),
+          ),
+        ),
+      );
+    } catch (e) {
+      debugPrint('VideoPlayer build error: $e');
+      return const SizedBox.shrink();
+    }
   }
 }
-
