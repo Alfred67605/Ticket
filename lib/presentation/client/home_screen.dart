@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui';
 import '../../core/constants/app_colors.dart';
@@ -727,23 +728,7 @@ class _EventCard extends StatelessWidget {
         SizedBox(
           height: 180,
           width: double.infinity,
-          child: event.image != null && event.image!.isNotEmpty
-              ? (event.image!.startsWith('http')
-                  ? Image.network(
-                      event.image!,
-                      height: 180,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _gradientHeader(),
-                    )
-                  : Image.file(
-                      File(event.image!),
-                      height: 180,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _gradientHeader(),
-                    ))
-              : _gradientHeader(),
+          child: _buildEventImage(context),
         ),
 
         // Video Player Overlay (Alfred style)
@@ -787,6 +772,58 @@ class _EventCard extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Widget _buildEventImage(BuildContext context) {
+    if (event.image == null || event.image!.isEmpty) {
+      return _gradientHeader();
+    }
+    
+    if (event.image!.startsWith('http')) {
+      return Image.network(
+        event.image!,
+        height: 180,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _gradientHeader(),
+      );
+    }
+    
+    if (kIsWeb) {
+      if (event.image!.startsWith('assets/')) {
+        return Image.asset(
+          event.image!,
+          height: 180,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _gradientHeader(),
+        );
+      }
+      return _gradientHeader();
+    }
+
+    if (event.image!.startsWith('assets/')) {
+      return Image.asset(
+        event.image!,
+        height: 180,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _gradientHeader(),
+      );
+    }
+    
+    try {
+      return Image.file(
+        File(event.image!),
+        height: 180,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _gradientHeader(),
+      );
+    } catch (e) {
+      debugPrint('Error al cargar imagen en tarjeta: $e');
+      return _gradientHeader();
+    }
   }
 
   Widget _gradientHeader() {

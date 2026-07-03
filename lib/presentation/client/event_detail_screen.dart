@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -556,19 +557,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
               background: Stack(
                 children: [
                   Positioned.fill(
-                    child: event.image != null && event.image!.isNotEmpty
-                        ? (event.image!.startsWith('http')
-                            ? Image.network(
-                                event.image!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (ctx, err, stack) => _buildPlaceholder(event.category),
-                              )
-                            : Image.file(
-                                File(event.image!),
-                                fit: BoxFit.cover,
-                                errorBuilder: (ctx, err, stack) => _buildPlaceholder(event.category),
-                              ))
-                        : _buildPlaceholder(event.category),
+                    child: _buildEventImage(event),
                   ),
                   if (event.video != null && event.video!.isNotEmpty && event.mediaPreference != 'image')
                     Positioned.fill(
@@ -787,6 +776,50 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildEventImage(EventModel event) {
+    if (event.image == null || event.image!.isEmpty) {
+      return _buildPlaceholder(event.category);
+    }
+    
+    if (event.image!.startsWith('http')) {
+      return Image.network(
+        event.image!,
+        fit: BoxFit.cover,
+        errorBuilder: (ctx, err, stack) => _buildPlaceholder(event.category),
+      );
+    }
+    
+    if (kIsWeb) {
+      if (event.image!.startsWith('assets/')) {
+        return Image.asset(
+          event.image!,
+          fit: BoxFit.cover,
+          errorBuilder: (ctx, err, stack) => _buildPlaceholder(event.category),
+        );
+      }
+      return _buildPlaceholder(event.category);
+    }
+
+    if (event.image!.startsWith('assets/')) {
+      return Image.asset(
+        event.image!,
+        fit: BoxFit.cover,
+        errorBuilder: (ctx, err, stack) => _buildPlaceholder(event.category),
+      );
+    }
+    
+    try {
+      return Image.file(
+        File(event.image!),
+        fit: BoxFit.cover,
+        errorBuilder: (ctx, err, stack) => _buildPlaceholder(event.category),
+      );
+    } catch (e) {
+      debugPrint('Error al cargar imagen local: $e');
+      return _buildPlaceholder(event.category);
+    }
   }
 
   Widget _buildPlaceholder(String category) {
