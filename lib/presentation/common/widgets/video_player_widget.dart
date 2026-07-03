@@ -4,7 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 import '../../../core/constants/app_colors.dart';
 
-class VideoPlayerWidget extends StatefulWidget {
+/// Widget que muestra un overlay con botón de play sobre la imagen del evento.
+/// Al tocar play, abre un reproductor de video en pantalla completa aislado
+/// del árbol de widgets principal para evitar crashes de null-check en MediaTek.
+class VideoPlayerWidget extends StatelessWidget {
   final String videoUrl;
   final bool isMuted;
 
@@ -15,14 +18,54 @@ class VideoPlayerWidget extends StatefulWidget {
   });
 
   @override
-  State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
+  Widget build(BuildContext context) {
+    if (videoUrl.isEmpty) return const SizedBox.shrink();
+
+    return GestureDetector(
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => _FullscreenVideoPlayer(videoUrl: videoUrl),
+          ),
+        );
+      },
+      child: Container(
+        color: Colors.transparent,
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.5),
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+            ),
+            child: const Icon(
+              Icons.play_arrow_rounded,
+              color: Colors.white,
+              size: 40,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
+/// Reproductor de video en pantalla completa, aislado del árbol principal.
+class _FullscreenVideoPlayer extends StatefulWidget {
+  final String videoUrl;
+  const _FullscreenVideoPlayer({required this.videoUrl});
+
+  @override
+  State<_FullscreenVideoPlayer> createState() => _FullscreenVideoPlayerState();
+}
+
+class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _hasError = false;
-  bool _disposed = false;
+  bool _showControls = true;
 
   @override
   void initState() {
@@ -32,114 +75,130 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
 
   void _initController() {
     try {
-      if (widget.videoUrl.isEmpty) {
-        _hasError = true;
-        return;
-      }
-
       if (widget.videoUrl.startsWith('http')) {
         final uri = Uri.parse(widget.videoUrl);
         _controller = VideoPlayerController.networkUrl(uri);
       } else if (kIsWeb) {
-        _hasError = true;
+        setState(() => _hasError = true);
         return;
       } else {
         final file = File(widget.videoUrl);
         if (!file.existsSync()) {
-          debugPrint('VideoPlayer: archivo no existe: ${widget.videoUrl}');
-          _hasError = true;
+          setState(() => _hasError = true);
           return;
         }
         _controller = VideoPlayerController.file(file);
       }
 
       _controller!.initialize().then((_) {
-        if (!mounted || _disposed) return;
-        _controller?.setLooping(true);
-        _controller?.setVolume(widget.isMuted ? 0.0 : 1.0);
-        _controller?.play();
-        setState(() {
-          _isInitialized = true;
-        });
+        if (!mounted) return;
+        _controller!.setLooping(true);
+        _controller!.setVolume(1.0);
+        _controller!.play();
+        setState(() => _isInitialized = true);
       }).catchError((error) {
-        debugPrint('VideoPlayer init error: $error');
-        if (mounted && !_disposed) {
-          setState(() => _hasError = true);
-        }
+        debugPrint('VideoPlayer error: $error');
+        if (mounted) setState(() => _hasError = true);
       });
     } catch (e) {
-      debugPrint('VideoPlayer initialization error: $e');
-      _hasError = true;
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant VideoPlayerWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.videoUrl != widget.videoUrl) {
-      _disposeController();
-      _isInitialized = false;
-      _hasError = false;
-      _initController();
-    }
-  }
-
-  void _disposeController() {
-    final c = _controller;
-    _controller = null;
-    if (c != null) {
-      try { c.dispose(); } catch (_) {}
+      debugPrint('VideoPlayer init error: $e');
+      if (mounted) setState(() => _hasError = true);
     }
   }
 
   @override
   void dispose() {
-    _disposed = true;
-    _disposeController();
+    try { _controller?.dispose(); } catch (_) {}
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_hasError) {
-      return const SizedBox.shrink();
-    }
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => setState(() => _showControls = !_showControls),
+        child: Stack(
+          children: [
+            // Video
+            if (_isInitialized && _controller != null)
+              Center(
+                child: AspectRatio(
+                  aspectRatio: _controller!.value.aspectRatio > 0
+                      ? _controller!.value.aspectRatio
+                      : 16 / 9,
+                  child: VideoPlayer(_controller!),
+                ),
+              ),
 
-    final controller = _controller;
-    if (controller == null || !_isInitialized) {
-      return const Center(
-        child: SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(
-            strokeWidth: 2.0,
-            color: AppColors.primaryLight,
-          ),
-        ),
-      );
-    }
+            // Loading
+            if (!_isInitialized && !_hasError)
+              const Center(
+                child: CircularProgressIndicator(color: AppColors.primaryLight),
+              ),
 
-    // Usar Texture directamente en vez del widget VideoPlayer del paquete
-    // para evitar el crash interno "Null check operator used on a null value"
-    // que ocurre en chipsets MediaTek dentro de _VideoPlayerWithRotation.
-    final textureId = controller.textureId;
-    if (textureId == null) {
-      return const SizedBox.shrink();
-    }
+            // Error
+            if (_hasError)
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, color: Colors.white54, size: 48),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No se pudo cargar el video',
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Volver'),
+                    ),
+                  ],
+                ),
+              ),
 
-    return SizedBox.expand(
-      child: ClipRect(
-        child: FittedBox(
-          fit: BoxFit.cover,
-          child: SizedBox(
-            width: controller.value.size.width > 0
-                ? controller.value.size.width
-                : MediaQuery.of(context).size.width,
-            height: controller.value.size.height > 0
-                ? controller.value.size.height
-                : MediaQuery.of(context).size.height,
-            child: Texture(textureId: textureId),
-          ),
+            // Controles
+            if (_showControls)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                        ),
+                        const Spacer(),
+                        if (_isInitialized && _controller != null)
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                if (_controller!.value.isPlaying) {
+                                  _controller!.pause();
+                                } else {
+                                  _controller!.play();
+                                }
+                              });
+                            },
+                            icon: Icon(
+                              _controller!.value.isPlaying
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                              color: Colors.white,
+                              size: 28,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
