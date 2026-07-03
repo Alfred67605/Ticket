@@ -4,10 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 import '../../../core/constants/app_colors.dart';
 
-/// Widget que muestra un overlay con botón de play sobre la imagen del evento.
-/// Al tocar play, abre un reproductor de video en pantalla completa aislado
-/// del árbol de widgets principal para evitar crashes de null-check en MediaTek.
-class VideoPlayerWidget extends StatelessWidget {
+class VideoPlayerWidget extends StatefulWidget {
   final String videoUrl;
   final bool isMuted;
 
@@ -18,54 +15,14 @@ class VideoPlayerWidget extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    if (videoUrl.isEmpty) return const SizedBox.shrink();
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            fullscreenDialog: true,
-            builder: (_) => _FullscreenVideoPlayer(videoUrl: videoUrl),
-          ),
-        );
-      },
-      child: Container(
-        color: Colors.transparent,
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.5),
-              shape: BoxShape.circle,
-              border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
-            ),
-            child: const Icon(
-              Icons.play_arrow_rounded,
-              color: Colors.white,
-              size: 40,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  State<VideoPlayerWidget> createState() => _VideoPlayerWidgetState();
 }
 
-/// Reproductor de video en pantalla completa, aislado del árbol principal.
-class _FullscreenVideoPlayer extends StatefulWidget {
-  final String videoUrl;
-  const _FullscreenVideoPlayer({required this.videoUrl});
-
-  @override
-  State<_FullscreenVideoPlayer> createState() => _FullscreenVideoPlayerState();
-}
-
-class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
+class _VideoPlayerWidgetState extends State<VideoPlayerWidget> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _hasError = false;
-  bool _showControls = true;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -75,130 +32,109 @@ class _FullscreenVideoPlayerState extends State<_FullscreenVideoPlayer> {
 
   void _initController() {
     try {
+      if (widget.videoUrl.isEmpty) {
+        if (mounted) setState(() => _hasError = true);
+        return;
+      }
+
       if (widget.videoUrl.startsWith('http')) {
-        final uri = Uri.parse(widget.videoUrl);
-        _controller = VideoPlayerController.networkUrl(uri);
+        _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoUrl));
       } else if (kIsWeb) {
-        setState(() => _hasError = true);
+        if (mounted) setState(() => _hasError = true);
         return;
       } else {
         final file = File(widget.videoUrl);
         if (!file.existsSync()) {
-          setState(() => _hasError = true);
+          debugPrint('VideoPlayer: file does not exist: ${widget.videoUrl}');
+          if (mounted) setState(() => _hasError = true);
           return;
         }
         _controller = VideoPlayerController.file(file);
       }
 
       _controller!.initialize().then((_) {
-        if (!mounted) return;
+        if (!mounted || _disposed) return;
+        
         _controller!.setLooping(true);
-        _controller!.setVolume(1.0);
+        _controller!.setVolume(widget.isMuted ? 0.0 : 1.0);
         _controller!.play();
-        setState(() => _isInitialized = true);
+        
+        setState(() {
+          _isInitialized = true;
+        });
       }).catchError((error) {
-        debugPrint('VideoPlayer error: $error');
-        if (mounted) setState(() => _hasError = true);
+        debugPrint('VideoPlayer init error: $error');
+        if (mounted && !_disposed) {
+          setState(() => _hasError = true);
+        }
       });
     } catch (e) {
-      debugPrint('VideoPlayer init error: $e');
+      debugPrint('VideoPlayer initialization error: $e');
       if (mounted) setState(() => _hasError = true);
     }
   }
 
   @override
+  void didUpdateWidget(covariant VideoPlayerWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.videoUrl != widget.videoUrl) {
+      _disposeController();
+      _isInitialized = false;
+      _hasError = false;
+      _initController();
+    } else if (oldWidget.isMuted != widget.isMuted) {
+      _controller?.setVolume(widget.isMuted ? 0.0 : 1.0);
+    }
+  }
+
+  void _disposeController() {
+    final c = _controller;
+    _controller = null;
+    if (c != null) {
+      try {
+        c.pause();
+        c.dispose();
+      } catch (_) {}
+    }
+  }
+
+  @override
   void dispose() {
-    try { _controller?.dispose(); } catch (_) {}
+    _disposed = true;
+    _disposeController();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        onTap: () => setState(() => _showControls = !_showControls),
-        child: Stack(
-          children: [
-            // Video
-            if (_isInitialized && _controller != null)
-              Center(
-                child: AspectRatio(
-                  aspectRatio: _controller!.value.aspectRatio > 0
-                      ? _controller!.value.aspectRatio
-                      : 16 / 9,
-                  child: VideoPlayer(_controller!),
-                ),
-              ),
+    if (_hasError) {
+      return const SizedBox.shrink();
+    }
 
-            // Loading
-            if (!_isInitialized && !_hasError)
-              const Center(
-                child: CircularProgressIndicator(color: AppColors.primaryLight),
-              ),
+    if (!_isInitialized || _controller == null) {
+      return const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.0,
+            color: AppColors.primaryLight,
+          ),
+        ),
+      );
+    }
 
-            // Error
-            if (_hasError)
-              Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.white54, size: 48),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'No se pudo cargar el video',
-                      style: TextStyle(color: Colors.white54, fontSize: 14),
-                    ),
-                    const SizedBox(height: 20),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Volver'),
-                    ),
-                  ],
-                ),
-              ),
+    final size = _controller!.value.size;
+    final hasValidSize = size.width > 0 && size.height > 0;
 
-            // Controles
-            if (_showControls)
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
-                        ),
-                        const Spacer(),
-                        if (_isInitialized && _controller != null)
-                          IconButton(
-                            onPressed: () {
-                              setState(() {
-                                if (_controller!.value.isPlaying) {
-                                  _controller!.pause();
-                                } else {
-                                  _controller!.play();
-                                }
-                              });
-                            },
-                            icon: Icon(
-                              _controller!.value.isPlaying
-                                  ? Icons.pause_rounded
-                                  : Icons.play_arrow_rounded,
-                              color: Colors.white,
-                              size: 28,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          ],
+    return SizedBox.expand(
+      child: FittedBox(
+        fit: BoxFit.cover,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: hasValidSize ? size.width : 160,
+          height: hasValidSize ? size.height : 100,
+          child: VideoPlayer(_controller!),
         ),
       ),
     );
